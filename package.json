@@ -1,0 +1,54 @@
+{
+  "name": "@skill-graph/audit",
+  "version": "0.1.0",
+  "description": "Skill Audit Loop — 5-phase audit procedure for keeping SKILL.md files grounded against truth sources.",
+  "type": "commonjs",
+  "license": "Apache-2.0",
+  "author": "Jacob Balslev",
+  "homepage": "https://github.com/jacob-balslev/skill-audit-loop#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jacob-balslev/skill-audit-loop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jacob-balslev/skill-audit-loop/issues"
+  },
+  "keywords": [
+    "skill-md",
+    "skill-audit",
+    "skill-metadata-protocol",
+    "ai-agents",
+    "agent-skills",
+    "audit-loop",
+    "drift-detection"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "audit": "node src/skill-audit.js",
+    "eval": "node src/evaluate-skill.js",
+    "batch-eval": "node src/batch-eval.js",
+    "lint-evals": "node src/eval-linter.js",
+    "staleness-check": "node src/eval-staleness-checker.js",
+    "build-worklist": "node src/build-skill-audit-worklist.js",
+    "test": "node src/skill-test-runner.js"
+  },
+  "files": [
+    "src/",
+    "evals/",
+    "docs/",
+    "SKILL_AUDIT_LOOP.md",
+    "SKILL_AUDIT_CHECKLIST.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@skill-graph/protocol": "^1.1.0",
+    "@skill-graph/cli": "^0.5.0"
+  },
+  "devDependencies": {}
+}
