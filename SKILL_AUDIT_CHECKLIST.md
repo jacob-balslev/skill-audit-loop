@@ -87,17 +87,17 @@ Required dimension rows:
 
 ### 1. Frontmatter validity
 
-- [ ] `schema_version` exists and equals `3`
+- [ ] `schema_version` exists and equals `5` (integer; the string `"5"` is tolerated for hand-rolled YAML for back-compat — see `schemas/skill.v5.schema.json`)
 - [ ] `name` exists and matches the intended skill identifier
 - [ ] `description` exists and is specific enough to route from
 - [ ] `version` exists
 - [ ] `type` is one of `capability`, `workflow`, `router`, `overlay`
-- [ ] `category` exists (v3 — renamed from `family` in v2→v3 bump)
+- [ ] `category` is one of the closed v5 enum: `foundations` / `engineering` / `design` / `quality` / `agent` / `product` (v5 — closed enum framed as browse facet; previously open-string in v3/v4; `family` in v2)
 - [ ] `scope` is one of `codebase`, `reference`, `portable`
 - [ ] `owner` exists
 - [ ] `freshness` exists
-- [ ] `drift_check` exists as an object with `last_verified` (v3 — was scalar date in v2)
-- [ ] `eval_artifacts`, `eval_state`, `routing_eval` all exist (orthogonal triple — shipped in schema_version 2 under SH-5784, retained in v3)
+- [ ] `drift_check` exists as an object with `last_verified` (v3+ — was scalar date in v2)
+- [ ] `eval_artifacts`, `eval_state`, `routing_eval` all exist (orthogonal triple — shipped in schema_version 2 under SH-5784, retained through v5)
 - [ ] `extends` exists when `type: overlay`
 - [ ] `extends` is absent when `type` is not `overlay`
 
