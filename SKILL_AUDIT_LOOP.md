@@ -104,11 +104,18 @@ When `evals/comprehension.json` exists, the comprehension grader runs against th
 ```
 for skill in priority_order(skill-graph centrality + staleness):
   audit(skill)
-  if audit_verdict in {FAIL, PASS_WITH_FIXES} and stale_field_exists:
-    improve(skill, field=stalest_field)
+  if audit_verdict in {FAIL, PASS_WITH_FIXES} and understanding_field_targetable:
+    improve(skill, field=understanding_field)   # one v6 Understanding field
   evaluate(skill)
   write Health Block fields back
 ```
+
+`understanding_field` is selected by `understandingField()` in
+`scripts/skill/skill-evolution-loop.js` — empty/missing field wins
+outright, otherwise shortest populated value among `description`,
+`mental_model`, `purpose`, `boundary`, `analogy`, `misconception`. The
+stalest Health date field stays in the trace as a staleness signal
+but is not what gets passed to the improver's HARD SCOPE.
 
 Priority is read directly from the Health Block — `last_audited` ascending tells the loop which skill to pick next. No telemetry crawl, no log aggregation.
 
