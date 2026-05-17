@@ -39,6 +39,10 @@ State lives in the skill's own frontmatter — the `audit_state` Health Block in
 | `src/eval-linter.js` | Validates eval artifacts |
 | `src/eval-staleness-checker.js` | Detects stale evals |
 | `src/graders/` | Graded-dimension prompt modules |
+| `src/skill-improvement-helpers.js` | Shared evaluator logic — candidate gating, model executor resolution, JSON extraction, history persistence |
+| `src/research-feedback.js` | Research-artifact analysis: fingerprint scoring, audit aggregation, per-skill brief enrichment |
+| `shared/model-provider.js` | Model alias → backend resolution (claude/codex/opencode/gemini), `MODEL_REGISTRY` |
+| `shared/skill-frontmatter.js` | Minimal YAML frontmatter parser for SKILL.md files |
 | `evals/` | Evaluation fixtures and baselines |
 
 ## What changed in v0.2.0

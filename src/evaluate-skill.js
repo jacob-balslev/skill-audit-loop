@@ -1173,7 +1173,7 @@ function main() {
   const regressionGate = args['regression-gate'] === true || args['regression-gate'] === 'true';
 
   if (!evalFile) {
-    console.error('Usage: node scripts/skill/evaluate-skill.js [--mode ab|matrix|comprehension] [--baseline-skill PATH] [--baseline-evals PATH] [--workspace DIR] [--eval-id 1,2] [--artifacts-dir DIR] [--output FILE] [--regression-gate] <evals.json | comprehension.json>');
+    console.error('Usage: node src/evaluate-skill.js [--mode ab|matrix|comprehension] [--baseline-skill PATH] [--baseline-evals PATH] [--workspace DIR] [--eval-id 1,2] [--artifacts-dir DIR] [--output FILE] [--regression-gate] <evals.json | comprehension.json>');
     process.exit(1);
   }
 
