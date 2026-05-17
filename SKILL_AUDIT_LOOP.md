@@ -1,438 +1,188 @@
 # Skill Audit Loop
 
-A skill is a contract about a subject, and the contract is only true while the things it was written against still hold. The codebase a skill is grounded in changes. The subject a skill describes changes. The Skill Audit Loop is the procedure that re-grounds a skill against both — it checks a skill's declared `grounding.truth_sources` against current reality and records the result.
+A skill is a contract about a subject. The contract is only true while the things it was written against still hold — the codebase drifts, the subject drifts, and the audit fingerprint in the skill's own frontmatter drifts with them. The Skill Audit Loop re-grounds a skill against current truth and records the result on the skill itself.
 
-This document standardizes that procedure so it can be run repeatably across many skills.
+This loop has one shape:
 
-## Goal
+```
+read  →  fix  →  test  →  next
+```
 
-The loop exists to keep each skill true to what it was grounded against, and therefore to keep a skill library healthy over time.
+That's it. One field at a time, keep or revert based on a single measurable signal, then move on. The discipline comes from Karpathy's auto-improvement loop: one editable asset, one scalar metric, one time box. The "read before changing" framing comes from Design Thinking. The structure here is the cheapest expression of both.
 
-It should continuously detect:
+## The Four Operations
 
-- metadata drift
-- routing drift
-- relation drift
-- stale grounding
-- weak eval coverage
-- portability hazards
+Every action in this loop falls into one of four operations. Each writes to a specific set of flat fields in the Skill Metadata Protocol v6 (see `skill-metadata-protocol/schemas/skill.v6.schema.json`).
+
+| Operation | What it does | Mutates skill? | Writes which fields |
+|---|---|---|---|
+| **audit** | Read every field, check freshness and validity against repo truth, score the seven graded dimensions when `--graded`. | No | `last_audited`, `audit_verdict`, `lint_verdict`, `drift_status` |
+| **improve** | Edit one field. One commit. Time-boxed. | Yes | the chosen field + `last_changed` |
+| **evaluate** | Run the eval suite (deterministic + comprehension grader) against the skill. | No | `eval_score`, `eval_failed_ids`, `freshness` |
+| **evolve** | Loop over the corpus: `audit → improve → evaluate`, prioritised by skill-graph centrality + staleness. | Yes (per skill) | all of the above, per skill |
+
+This replaces the previous 13-command surface. The mapping:
+
+| Old command | New |
+|---|---|
+| `audit:audit-skill` | `audit` |
+| `audit:domain-audit` | `audit --source-first` |
+| `audit:bidirectional-audit` | `audit --fix-code-too` |
+| `audit:deep-repo-audit` | `audit --scope repo` |
+| `audit:workspace-audit` | `audit --scope workspace` |
+| `audit:improve-skill` | `improve` |
+| `audit:auto-improve` | `improve --mode <adapter>` |
+| `audit:skill-fix` | `improve --lens <skill>` |
+| `audit:evaluate-skill` | `evaluate` |
+| `audit:improve-eval` | DELETED (was byte-equivalent duplicate of `evaluate-skill`) |
+| `audit:skill-evolution` | `evolve` |
+| `audit:skill-discovery` | retained — creates new skills, separate concern |
+| `audit:feedback` | moved to `design:feedback` — visual loop, not skill audit |
+
+## The Health Block — state lives on the skill
+
+Schema v6 adds seven flat Health fields to every SKILL.md frontmatter:
+
+```yaml
+last_audited: 2026-05-17       # date `audit` last ran
+last_changed: 2026-05-15       # date the skill body or frontmatter was last edited
+audit_verdict: PASS_WITH_FIXES # aggregate of lint + drift + graded dimensions
+eval_score: 4.2                # 0.0–5.0 from the eval runner
+eval_failed_ids: []            # empty when clean
+lint_verdict: PASS             # deterministic-lint result
+drift_status: OK               # OK | DRIFT | BROKEN | STALE | NO_BASELINE | EXTERNAL_UNHASHED | UNKNOWN
+```
+
+Before v6, this state was scattered across `eval-history.jsonl`, `routing-misses.jsonl`, `.opencode/progress/skill-audit-*`, `health-ledger.jsonl`, and `findings/*.md`. To know one skill's audit status you grepped five places. v6 collapses that to one frontmatter block. The loop reads it; the operations write it back.
+
+The same skill's body still gets `audits/<skill-name>/findings.md` and `verdict.md` when an audit produces longer-form output, but those files are evidence, not state. The state of truth is the Health Block.
+
+## The Inner Pipeline of `audit`
+
+The previous five-phase shape (Deterministic → Graded → Aggregate → Fix-or-defer → Re-verify) survives, but it lives entirely inside the `audit` operation as its internal pipeline. Users no longer see five phases — they see one `audit` command. Internally:
+
+1. **Deterministic** (always) — `skill-lint.js` runs schema validation, relation-target existence, eval coherence, archetype section presence, routing quality. Writes `lint_verdict`.
+2. **Graded** (only under `--graded`) — fans out seven per-dimension prompts (metadata, activation, relation, grounding, content, eval, portability) to the grader CLI.
+3. **Aggregate** — combines the dimension verdicts. Any `FAIL` dominates; otherwise any `PASS_WITH_FIXES` dominates; otherwise `PASS`. Writes `audit_verdict`.
+4. **Drift check** — `skill-graph-drift.js` against declared `grounding.truth_sources`. Writes `drift_status`.
+5. **Stamp** — writes `last_audited` to today's ISO date.
+
+This is deterministic plumbing. The user runs `audit <skill>`; the internal pipeline does its work; the frontmatter records the result.
+
+## The Inner Pipeline of `evaluate`
+
+`evaluate` runs the eval suite the skill declares (typically `evals/<skill>.json` plus the optional `evals/comprehension.json`). It writes:
+
+- `eval_score` — aggregate 0.0–5.0 across all evals run
+- `eval_failed_ids` — list of failed case IDs, empty when clean
+- `freshness` — today's ISO date
+
+When `evals/comprehension.json` exists, the comprehension grader runs against the five flat Understanding fields (`mental_model`, `purpose`, `boundary`, `analogy`, `misconception`) — or against the legacy `concept.*` block for v5 skills not yet migrated.
+
+## The Inner Pipeline of `improve`
+
+`improve` is the only operation that mutates the skill. Karpathy discipline applies absolutely:
+
+1. **One field, one commit.** The operator (or the loop) chooses one stale or failing field. `improve --field mental_model <skill>` edits exactly that field.
+2. **Time-boxed.** Default 20 minutes per field. Beyond that, abort and re-queue.
+3. **Auto-test after.** `improve` immediately calls `evaluate` and checks the metric for the targeted field.
+4. **Keep or revert.** If `eval_score` did not improve (or regressed below an allowed threshold), the commit is reverted automatically. The loop records the failed attempt and moves to the next field.
+5. **Stamp** — writes `last_changed` to today's ISO date.
+
+`improve` has three modes:
+
+| Mode | What it does | When to use |
+|---|---|---|
+| (default) | Edit a field of this skill's own SKILL.md | The most common case |
+| `--mode <adapter>` | Run an auto-improve adapter (prompt-evolution, design-candidate-discovery, perf, docs) against this skill | When the change pattern is well-known |
+| `--lens <other-skill>` | Apply another skill as an audit lens against this skill and fix the violations | Cross-skill consistency work — formerly `audit:skill-fix` |
+
+## The Inner Pipeline of `evolve`
+
+`evolve` is a thin for-loop over the four operations:
+
+```
+for skill in priority_order(skill-graph centrality + staleness):
+  audit(skill)
+  if audit_verdict in {FAIL, PASS_WITH_FIXES} and stale_field_exists:
+    improve(skill, field=stalest_field)
+  evaluate(skill)
+  write Health Block fields back
+```
+
+Priority is read directly from the Health Block — `last_audited` ascending tells the loop which skill to pick next. No telemetry crawl, no log aggregation.
 
 ## Loop Principles
 
-1. One skill at a time
-2. Deterministic checks first
-3. Human judgment second
-4. Fix confirmed drift in the same pass when practical
-5. Keep artifacts small and standardized
+1. **One skill, one field, one metric at a time.** Karpathy keep-or-revert pressure makes the loop tractable.
+2. **State lives in the artifact.** The Health Block is the source of truth; logs are append-only evidence.
+3. **Read before changing.** `audit` must run before `improve` is allowed to write.
+4. **Deterministic checks first; graded checks second.** Lint and drift are mechanical and trustworthy; graded scores are subject to model variance.
+5. **Fixes are tiny by default.** A field-sized change is the unit of work. Larger changes are decomposed into a sequence of field-sized improves.
 
 ## Loop Inputs
 
-The loop consumes:
-
-1. `SKILL.md`
-2. any eval files
-3. referenced truth sources
-4. manifest output
-5. deterministic lint/census results
+1. `SKILL.md` (frontmatter is read; Health Block is read first)
+2. `evals/<skill>.json` and optional `evals/comprehension.json`
+3. The truth sources declared in `grounding.truth_sources`
+4. `skills.manifest.json` (generated by `skill-graph`)
+5. Skill-graph priority order from `skill-graph-builder.js`
 
 ## Loop Outputs
 
-The loop should emit:
+Two kinds. The Health Block (state) and the audit artifacts (evidence):
 
-1. audit report
-2. scorecard or verdict file
-3. optional fix patch
-4. updated manifest if inventory changed
+**Health Block** — written back into the skill's own frontmatter. This is the state.
 
-The minimum concrete file set is:
+**Audit artifacts** — under `audits/<skill-name>/`:
 
 ```text
-audits/<skill-name>/findings.md
-audits/<skill-name>/verdict.md
+audits/<skill-name>/
+    findings.md     ← human-readable narrative of issues found
+    verdict.md      ← short rationale and fix/defer record
+    scorecard.md    ← per-dimension scores when --graded ran
 ```
 
-## Loop at a Glance
+These remain append-only evidence files for any audit run that needs long-form output. The skill's Health Block lets a reader skip them entirely if all they need is the verdict.
 
-> **The question this diagram answers:** "What are the phases of an audit, and which are optional?"
-
-Five phases, left to right. Phase 2 (Graded) is the only optional one — stub mode skips it and hands qualitative work to the human. Every other phase runs on every iteration.
-
-```mermaid
-flowchart LR
-  Start(["Select<br/>skill"])
-  P1["<b>Phase 1</b><br/>Deterministic<br/>lint → stub"]
-  P2["<b>Phase 2</b><br/>Graded<br/><i>optional</i>"]
-  P3["<b>Phase 3</b><br/>Aggregate<br/>verdict"]
-  P4["<b>Phase 4</b><br/>Fix<br/>or defer"]
-  P5["<b>Phase 5</b><br/>Re-verify"]
-  Next(["Next<br/>skill"])
-
-  Start --> P1 --> P2 --> P3 --> P4 --> P5 --> Next
-  P3 -.->|PASS — skip fix| P5
-
-  classDef phase fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,font-weight:bold
-  classDef optional fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-dasharray:4 2
-  classDef endpt fill:#ecfdf5,stroke:#047857,color:#064e3b
-  class P1,P3,P4,P5 phase
-  class P2 optional
-  class Start,Next endpt
-```
-
-<!-- Rendered copy for non-Mermaid viewers. Regenerate via: npx @mermaid-js/mermaid-cli -i <source> -o docs/images/audit-phases.png -->
-<img src="docs/images/audit-phases.png" alt="Five audit phases left to right — select skill, deterministic lint, optional graded mode, aggregate verdict, fix or defer, re-verify, then next skill" width="960" />
-
-**Legend.** Blue solid = mandatory phase. Yellow dashed = optional phase. Green ovals = loop endpoints. The dashed arrow from Phase 3 to Phase 5 is the PASS shortcut — when the verdict is clean, there is nothing to fix.
-
-**What each phase owns:**
-
-- **Phase 1 — Deterministic** (always runs). `scripts/skill-lint.js` runs schema validation, relation-target existence, eval coherence, archetype section presence, and routing quality. Writes stubbed `findings.md` / `verdict.md` / `scorecard.md` with P1 lint errors and P2 warnings pre-populated and qualitative dimensions left as human TODO.
-- **Phase 2 — Graded** (only under `--graded`). Dispatches seven per-dimension prompts to a grader CLI; see the zoomed diagram below.
-- **Phase 3 — Aggregate**. `aggregateVerdict` combines the seven dimension verdicts into one final verdict ∈ {`PASS`, `PASS WITH FIXES`, `PARTIAL`, `FAIL`}. Any `FAIL` dominates; any `PASS WITH FIXES` dominates otherwise; all-`PASS` yields `PASS`.
-- **Phase 4 — Fix or defer**. Fix in-pass when the issue is localized, confirmed, low-risk, and inside the skill or its metadata. Defer explicitly with rationale otherwise.
-- **Phase 5 — Re-verify**. Re-run `skill-lint.js`, regenerate manifest if touched, confirm fixes stick, update `drift_check.last_verified`.
-
-### Graded mode, zoomed in
-
-> **The question this diagram answers:** "What happens inside Phase 2 when `--graded` is set?"
-
-The graded phase dispatches one prompt per scorecard dimension, collects the structured responses, and merges the verdicts. The fan-out is the whole point: each dimension is graded in isolation so a weak dimension does not hide behind a strong one.
-
-```mermaid
-flowchart TB
-  Enter(["Phase 2 entry"])
-  Build["<b>audit-prompt-builder.js</b><br/>compose per-dimension prompt"]
-  Enter --> Build
-
-  Build --> D1[1 · Metadata]
-  Build --> D2[2 · Activation]
-  Build --> D3[3 · Relation]
-  Build --> D4[4 · Grounding<br/><i>skipped if scope: portable</i>]
-  Build --> D5[5 · Content]
-  Build --> D6[6 · Eval]
-  Build --> D7[7 · Portability]
-
-  D1 & D2 & D3 & D4 & D5 & D6 & D7 --> Grader{{"<b>Grader CLI</b><br/><code>claude -p</code> · <code>codex exec</code> · mock"}}
-  Grader --> Parse["<b>parseDimensionResponse</b><br/>verdict · score · findings · evidence"]
-  Parse --> Exit(["to Phase 3"])
-
-  classDef phase fill:#dbeafe,stroke:#2563eb,color:#1e3a8a,font-weight:bold
-  classDef dim fill:#f5f3ff,stroke:#7c3aed,color:#4c1d95
-  classDef grader fill:#fce7f3,stroke:#db2777,color:#831843
-  classDef endpt fill:#ecfdf5,stroke:#047857,color:#064e3b
-  class Build,Parse phase
-  class D1,D2,D3,D4,D5,D6,D7 dim
-  class Grader grader
-  class Enter,Exit endpt
-```
-
-<!-- Rendered copy for non-Mermaid viewers. Regenerate via: npx @mermaid-js/mermaid-cli -i <source> -o docs/images/graded-mode.png -->
-<img src="docs/images/graded-mode.png" alt="Graded mode fans out to 7 dimensions — metadata, activation, relation, grounding (skipped when portable), content, eval, portability — through a user-configurable grader CLI, then parses structured verdicts for the aggregate phase" width="1000" />
-
-**Legend.** Blue = prompt composition and response parsing (mechanical). Purple = individual dimension prompts. Pink = the external grader CLI, user-configurable via `--grader-cli`. Green ovals = entry/exit handoffs to the main loop.
-
-### Which phase writes to which artifact?
-
-The three artifact files are append-only across phases. Tracing where any line came from:
-
-- **Phase 1 (stub seeding)** — writes initial `findings.md` (lint P1/P2), `verdict.md` (FAIL if lint errors, PASS WITH FIXES otherwise), and `scorecard.md` (metadata auto-scored from lint, others TODO).
-- **Phase 2 (graded overwrite)** — replaces the qualitative TODO sections in `findings.md` / `verdict.md` / `scorecard.md` with grader-emitted verdicts + evidence quotes. Metadata row stays lint-sourced.
-- **Phase 3 (aggregate)** — writes the final verdict into `verdict.md § Final Verdict` and the dimension summary table into `scorecard.md`.
-- **Phase 4 (fix)** — appends a Follow-up State note to `verdict.md` naming each fix applied or deferred with rationale.
-- **Phase 5 (re-verify)** — no artifact writes; updates `drift_check.last_verified` in the skill's own `SKILL.md` frontmatter.
-
-Artifact roots: `examples/audits/<skill>/` for curated worked examples shipped with this repo; `audits/<skill>/` for downstream adopter output. See [Recommended Artifact Layout](#recommended-artifact-layout) for the two-tier convention.
-
-## Standard Loop
-
-### Step 1. Select a skill
-
-Choose a skill from the active library.
-
-Selection strategies:
-
-- highest drift risk
-- lowest eval coverage
-- highest routing centrality
-- newest or least stable skills
-
-### Step 2. Run deterministic checks
-
-Run the local health tooling first. The stub generator combines Steps 2 and 9
-into a single command — it runs lint for you, parses the output, and writes the
-three artifact stubs with lint findings pre-populated so you can focus on the
-qualitative sections:
+## Quick start
 
 ```bash
-node scripts/skill-audit.js <skill-name>
-# options:
-#   --audit-root <path>   default: examples/audits/ (use audits/ for downstream output)
-#   --force               overwrite existing artifacts
+# Audit a single skill
+node src/skill-audit.js <skill-name>
+
+# Audit with graded dimensions
+node src/skill-audit.js <skill-name> --graded
+
+# Improve one field (auto-tests + keeps or reverts)
+node src/skill-improve.js <skill-name> --field mental_model
+
+# Evaluate a skill (writes eval_score and eval_failed_ids)
+node src/evaluate-skill.js <skill-name>
+
+# Evolve the corpus — audit, improve, evaluate each in priority order
+node src/skill-evolve.js --top 10
+
+# Show the Health Block for a skill at a glance
+node src/skill-status.js <skill-name>
 ```
 
-The command produces `<audit-root>/<skill-name>/{findings,verdict,scorecard}.md`
-with lint errors and warnings stubbed as P1/P2 findings and all qualitative
-dimensions left as TODO placeholders for human review. See "## Stub Generator"
-below for the full behaviour reference.
+## Cadence
 
-Typical manual checks (when running the loop without the stub generator):
-
-1. frontmatter/schema validation
-2. manifest regeneration
-3. overlap/conflict detection
-4. routing coverage checks
-5. broken reference checks
-
-### Step 3. Read the skill as a contract
-
-Read the skill itself and classify it:
-
-1. what kind of skill is this?
-2. what decision is it supposed to help with?
-3. what mistake is it supposed to prevent?
-4. what would go wrong if it drifted?
-
-### Step 4. Apply the Skill Audit Checklist
-
-Use `SKILL_AUDIT_CHECKLIST.md` as the canonical audit checklist.
-
-### Step 5. Verify grounding
-
-When the skill is grounded to code, routes, or external reference truth:
-
-1. check every truth source exists
-2. check claims still match the source
-3. classify mismatches as either:
-   - skill drift
-   - code drift
-   - documentation drift
-
-### Step 6. Evaluate routing quality
-
-Review whether the skill is likely to activate correctly.
-
-Check:
-
-1. description specificity
-2. keyword quality
-3. trigger quality
-4. path precision
-5. under-triggering or over-triggering risks
-
-### Step 7. Evaluate relation quality
-
-Check:
-
-1. adjacency makes sense
-2. boundary rules are crisp
-3. verification partners are current
-4. dependencies are real
-
-### Step 8. Grade the skill
-
-Use a simple OSS verdict model.
-
-| Verdict | Meaning |
+| Cadence | Action |
 |---|---|
-| PASS | healthy, no meaningful drift |
-| PASS WITH FIXES | healthy after in-pass fixes |
-| PARTIAL | useful but still incomplete |
-| FAIL | not safe or not useful enough in current form |
-
-### Step 9. Write artifacts
-
-Minimum artifacts:
-
-1. findings report
-2. verdict summary
-
-Optional artifacts:
-
-1. scorecard
-2. updated manifest snapshot
-3. migration notes
-
-Use the standard file names and section structures from `SKILL_AUDIT_CHECKLIST.md`.
-
-### Step 10. Fix what is safe to fix now
-
-Fix in the same pass when the issue is:
-
-- localized
-- confirmed
-- low-risk
-- inside the skill or its metadata
-
-Defer only when the issue requires larger codebase or governance changes.
-
-### Step 11. Re-run deterministic verification
-
-After changes:
-
-1. re-run schema validation
-2. re-run manifest generation if needed
-3. re-run any affected lint/overlap checks
-
-### Step 12. Mark completion
-
-A loop iteration is done when:
-
-1. verdict is written
-2. findings are recorded
-3. fixes are applied or deferred explicitly
-4. verification was re-run after changes
-
-## Recommended Artifact Layout
-
-Skill Graph uses a two-tier artifact root convention:
-
-| Root | When to use |
-|---|---|
-| `examples/audits/<skill-name>/` | Shipped, curated worked examples that travel with the repo (e.g. the `documentation` audit in this repo). These are reference artifacts for adopters. |
-| `audits/<skill-name>/` | Downstream consumer output — audit artifacts produced by adopters running the loop against their own skill libraries. These do not belong in the Skill Graph repo itself. |
-
-The minimum concrete file set under either root is:
-
-```text
-<root>/<skill-name>/
-    findings.md
-    verdict.md
-    scorecard.md   (optional but strongly recommended)
-```
-
-## Artifact Content Contract
-
-### `findings.md`
-
-Must contain:
-
-1. audited skill name
-2. date of audit
-3. final verdict summary
-4. every finding with severity and evidence
-5. required fixes list
-
-### `verdict.md`
-
-Must contain:
-
-1. audited skill name
-2. final verdict using the canonical verdict vocabulary
-3. short rationale
-4. explicit statement of whether fixes were applied, deferred, or unnecessary
-
-### `scorecard.md`
-
-When present, it must score these exact dimensions:
-
-1. Metadata validity
-2. Activation quality
-3. Relation quality
-4. Grounding fidelity
-5. Content quality
-6. Eval quality
-7. Portability quality
-
-## Standard Scorecard Dimensions
-
-Use these dimensions if you want a richer audit output.
-
-| Dimension | Question |
-|---|---|
-| Metadata validity | Is the frontmatter schema valid? |
-| Activation quality | Will the skill activate when it should? |
-| Relation quality | Are graph relations useful and correct? |
-| Grounding fidelity | Do claims match truth sources? |
-| Content quality | Is the skill dense, clear, and actionable? |
-| Eval quality | Does the skill have meaningful evaluation coverage? |
-| Portability quality | Can the skill travel without losing its meaning? |
-
-## Stub Generator
-
-`scripts/skill-audit.js` accelerates the audit loop by seeding the three
-artifact stubs from lint output. It is the recommended entry point for Steps 2
-and 9 of the loop.
-
-### What it does
-
-1. Validates that `skills/<skill-name>/SKILL.md` exists.
-2. Runs `scripts/skill-lint.js skills/<skill-name> --no-color --skip-generator-parity`
-   and captures stdout, stderr, and exit code.
-3. Parses the lint output into `(file, line, col, severity, message)` tuples.
-4. Writes three stubs under `<audit-root>/<skill-name>/`:
-   - `findings.md` — one finding per lint diagnostic (P1 for errors, P2 for
-     warnings) plus five human-judgment TODO sections (activation, relations,
-     grounding, content, evals).
-   - `verdict.md` — FAIL when lint errors exist, PASS WITH FIXES otherwise;
-     always includes a "Human Judgment Required" section.
-   - `scorecard.md` — schema validity auto-scored from lint; all other
-     dimensions are TODO. Grounding row is N/A when `scope: portable`.
-
-### What it does NOT do
-
-- It does not automate any qualitative judgment.
-- It does not modify the skill being audited.
-- It does not run the full lint suite (generator parity and sample manifest
-  checks are skipped — those run against the whole library, not one skill).
-
-### CLI reference
-
-```bash
-node scripts/skill-audit.js <skill-name>
-node scripts/skill-audit.js <skill-name> --audit-root <path>
-node scripts/skill-audit.js <skill-name> --force
-```
-
-| Flag | Default | Effect |
-|---|---|---|
-| `<skill-name>` | required | Must match a directory under `skills/` |
-| `--audit-root <path>` | `examples/audits/` | Destination root for the three stubs |
-| `--force` | off | Overwrite any existing artifact files |
-
-The tool exits 1 if the skill directory does not exist, if any of the three
-output files already exist (without `--force`), or if argument parsing fails.
-
-### Audit-root convention
-
-| Root | When to use |
-|---|---|
-| `examples/audits/<skill-name>/` | Shipped, curated worked examples (this repo) |
-| `audits/<skill-name>/` | Downstream consumer output (adopters' own libraries) |
-
-Use `--audit-root audits/` when running the loop against a skill library that
-is not the Skill Graph repo itself.
-
-### Typical workflow
-
-```bash
-# 1. Seed the stubs
-node scripts/skill-audit.js my-skill
-
-# 2. Open findings.md and complete the human-judgment TODO sections
-
-# 3. Update verdict.md with the final verdict once all sections are reviewed
-
-# 4. Fill in scorecard.md scores (replace TODO with 1–5 + justification)
-
-# 5. Re-run lint to confirm any fixes are clean
-node scripts/skill-lint.js skills/my-skill
-```
-
-## Standard Cadence
-
-Suggested cadence for a living library:
-
-- every change: deterministic validation
-- weekly: routing drift + overlap review
-- monthly: deep per-skill audits for high-value skills
-- before release: full-library health sweep
+| Every change | Deterministic `audit` runs in lint as part of CI |
+| Daily | `evolve --top 5` walks the five stalest skills |
+| Weekly | `audit --graded` for skills with `last_audited` older than 7 days and `category` in the high-centrality set |
+| Before release | `evolve --scope all` |
 
 ## Non-Goals
 
-This loop does not require:
+The loop does not require a separate issue tracker, dashboard, control plane, or proprietary quality rubric. Markdown reader + JSON Schema validator + the four operations is the full stack. Adopters can layer monitoring or queue management on top, but the loop itself stays minimal.
 
-- a separate issue tracker integration
-- a dashboard or control plane
-- a proprietary quality rubric beyond the checklist
-- any runtime beyond a markdown reader and a JSON Schema validator
+## Related Specs
 
-Adopters can layer any of these on top without changing the loop itself.
+- `skill-metadata-protocol/docs/skill-metadata-protocol.md` — the canonical field list including the v6 Health Block and flat Understanding fields
+- `skill-metadata-protocol/schemas/skill.v6.schema.json` — the machine-validated contract
+- `skill-metadata-protocol/docs/migrations/v5-to-v6.md` — concept block flattening + Health Block introduction
+- `SKILL_AUDIT_CHECKLIST.md` — the per-skill checklist used during `audit`
