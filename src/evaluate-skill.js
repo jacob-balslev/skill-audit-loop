@@ -201,15 +201,35 @@ function sanitizedEnv() {
   return env;
 }
 
+// 2026-05-17: previously this function stripped stderr/stdout and returned
+// "Evaluation command failed" regardless of cause. That hid the real reason
+// (rate-limit, auth, session) and produced silent-eval-failure-after-first-run
+// (resumption-prompt finding #3). The CLI surfaces concrete diagnostic text in
+// stderr — we preserve it (truncated to 2KB) so the operator can see why a
+// run died. Exit code and signal are also surfaced when present.
 function formatCommandError(command, args, error) {
   const stderr = typeof error?.stderr === 'string' ? error.stderr.trim() : String(error?.stderr || '').trim();
   const stdout = typeof error?.stdout === 'string' ? error.stdout.trim() : String(error?.stdout || '').trim();
+  const exitCode = error?.status !== undefined && error?.status !== null ? ` (exit ${error.status})` : '';
+  const signal = error?.signal ? ` (signal ${error.signal})` : '';
+  const cmdLabel = `${command}${exitCode}${signal}`;
 
-  if (stderr) return 'Evaluation command failed';
-  if (stdout) return 'Evaluation command failed';
-  if (error instanceof Error && error.message) return error.message;
-  return 'Evaluation command failed';
+  const parts = [`Evaluation command failed: ${cmdLabel}`];
+  if (stderr) parts.push(`stderr: ${stderr.slice(0, 2000)}`);
+  // stdout is only surfaced when stderr is empty — CLIs typically use stderr
+  // for diagnostics and stdout for the payload we wanted in the first place.
+  if (stdout && !stderr) parts.push(`stdout: ${stdout.slice(0, 2000)}`);
+  if (!stderr && !stdout && error instanceof Error && error.message) {
+    parts.push(`message: ${error.message}`);
+  }
+  return parts.join(' | ');
 }
+
+// 5-minute default ceiling per CLI call. Without this the Claude/OpenCode/Gemini
+// shell-out can hang indefinitely on a stalled API call, which made finding #3
+// look like a silent crash instead of a stuck process. Override with
+// SKILL_AUDIT_CLI_TIMEOUT_MS=<ms> when running long-context grader prompts.
+const CLI_TIMEOUT_MS = Number(process.env.SKILL_AUDIT_CLI_TIMEOUT_MS || 5 * 60 * 1000);
 
 function runCommand(command, args, options) {
   try {
@@ -219,6 +239,7 @@ function runCommand(command, args, options) {
       env: sanitizedEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 10 * 1024 * 1024,
+      timeout: CLI_TIMEOUT_MS,
       // npm-installed CLIs (claude, opencode, gemini) live as .cmd shims on
       // Windows; execFileSync without a shell cannot resolve PATHEXT, so the
       // call fails with spawnSync ENOENT. shell:true on win32 routes through
@@ -257,14 +278,26 @@ function runClaudeCliPrompt(prompt, {
   return runCommand('claude', args, { cwd: workspace });
 }
 
+// Up to 4 attempts on empty CLI output. Without per-attempt logging this loop
+// previously absorbed silent failures — finding #3 (2026-05-17): subsequent
+// evals after the first run returned '' four times in a row with no operator
+// visibility into why. Now we narrate each retry and the final exhaustion so
+// rate-limit / auth / session-degradation patterns are visible in the log.
 function getEvalResponse(prompt, options) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const response = runPromptWithCli(prompt, options);
     if (response !== '') {
+      if (attempt > 0) {
+        console.warn(`    [getEvalResponse] succeeded on attempt ${attempt + 1}/4 after ${attempt} empty response(s)`);
+      }
       return response;
+    }
+    if (attempt < 3) {
+      console.warn(`    [getEvalResponse] attempt ${attempt + 1}/4 returned empty response — retrying`);
     }
   }
 
+  console.warn('    [getEvalResponse] all 4 attempts returned empty — returning ""');
   return '';
 }
 
