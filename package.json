@@ -1,7 +1,7 @@
 {
   "name": "@skill-graph/audit",
-  "version": "0.1.0",
-  "description": "Skill Audit Loop — 5-phase audit procedure for keeping SKILL.md files grounded against truth sources.",
+  "version": "0.2.0",
+  "description": "Skill Audit Loop — 4 operations (audit, improve, evaluate, evolve) for keeping SKILL.md files grounded against truth sources, with the 5-phase audit pipeline preserved inside `audit`.",
   "type": "commonjs",
   "license": "Apache-2.0",
   "author": "Jacob Balslev",
@@ -47,7 +47,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@skill-graph/protocol": "^1.1.0",
+    "@skill-graph/protocol": "^1.3.0",
     "@skill-graph/cli": "^0.5.0"
   },
   "devDependencies": {}
