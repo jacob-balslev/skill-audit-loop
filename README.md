@@ -34,7 +34,7 @@ State lives in the skill's own frontmatter — the `audit_state` Health Block in
 | `src/evaluate-skill.js` | The `evaluate` operation (eval suite runner) |
 | `src/skill-evolve.js` | The `evolve` operation (corpus walker) |
 | `src/skill-status.js` | Read-only view of a skill's Health Block |
-| `src/build-skill-audit-worklist.js` | Canonical work-list generator; ranks skills for evolve dispatch and records checklist state from scorecards, claim state, previous work-list status, and skill versions. The root `Development/scripts/skill/build-skill-audit-worklist.js` command is only a compatibility shim to this file. |
+| `src/build-skill-audit-worklist.js` | Canonical work-list generator; ranks skills for evolve dispatch and records checklist state from scorecards, claim state, previous work-list status, and skill versions. The root `Development/scripts/skill/build-skill-audit-worklist.js` command is only a compatibility shim to this file; ownership is registered in `../docs/reference/implementation-ownership.json`. |
 | `src/batch-eval.js` | Parallel eval runner for bulk operations |
 | `src/eval-linter.js` | Validates eval artifacts |
 | `src/eval-staleness-checker.js` | Detects stale evals |
