@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 This changelog tracks the npm package `@skill-graph/audit`. The `schema_version` the audit loop writes into skill frontmatter is owned by [skill-metadata-protocol](https://github.com/jacob-balslev/skill-metadata-protocol) — currently `6`. See [ADR 0007](https://github.com/jacob-balslev/skill-metadata-protocol/blob/main/docs/adr/0007-version-source-of-truth.md) for the cross-repo source-of-truth model.
 
+## [0.3.0] — 2026-05-18
+
+### Added
+- **Worklist JSON `schema_version: "2.0.0"` + parallel `publicationQueue` array.** `src/build-skill-audit-worklist.js` now joins `skill-graph/data/publication-classification.json` against the audit worklist and emits a tiered (S/A/B/C) publication queue alongside the existing audit worklist. Each entry records `tier`, `pop_score`, `source`, `needs_sanitization`, `demand_signal`, `rename_to`, `included_in_export` (cross-referenced against `skill-graph/marketplace/skills/`), and `worklist_rank` (cross-reference to `worklist[].rank`). Audit consumers (`.opencode/commands/skill-audit-*.md`, `continue-prompt.md`) are unaffected — `worklist[]` shape is preserved.
+- **New top-level fields:** `schema_version`, `generator_version` (read from `package.json`), `supersedes` (paths replaced by the merged output), `changelog_summary` (one-line release note), `publication_ledger` (relative path to the source ledger).
+- **`summary.publication` aggregates:** `{publishable, salesHubBound, personalInfra, alreadyPublished, tiers: {S, A, B, C}, ledgerEntries}` — supports dashboards and CI checks.
+- **`conflicts[]` warn-only block** — emitted when ledger classification disagrees with manifest scope (e.g., ledger says `publishable` but manifest scope is `salesHub`). Warns; never fails the build. Mirrors the `eval-staleness-checker.js` posture.
+- **`publication_orphans[]`** — ledger entries that name skills missing from both the manifest and the marketplace export. Surfaces stale/archived references.
+- **New generated MD output:** `skill-graph/docs/marketplace-publication-queue.generated.md`. Grouped by tier, includes summary, conflicts, orphans, and `supersedes`. Renderer lives in `renderPublicationMarkdown()`.
+- **`--skip-publication` CLI flag** — opts out of ledger read, publicationQueue, conflicts, and the publication MD. Lets legacy callers and forks without the ledger continue to operate.
+- **Help text expanded** to document `--skip-publication`, `--publication-md-out`, and the three default output paths.
+
+### Changed
+- **`generatedAt` renamed to `generated_at`** to match the snake_case convention used by sibling files in `.opencode/progress/` (`last_updated`, `repo_state.captured_at`, etc.). `generatedAt` retained as a deprecated alias for one minor version; drop in 0.4.0.
+
+### Deprecated
+- **Top-level `generatedAt` field** (alias only). Removed in 0.4.0. Update consumers to read `generated_at` instead.
+
 ## [0.2.0] — 2026-05-17
 
 ### Changed

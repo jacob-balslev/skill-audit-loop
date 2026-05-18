@@ -1,6 +1,6 @@
 {
   "name": "@skill-graph/audit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Skill Audit Loop — 4 operations (audit, improve, evaluate, evolve) for keeping SKILL.md files grounded against truth sources, with the 5-phase audit pipeline preserved inside `audit`.",
   "type": "commonjs",
   "license": "Apache-2.0",

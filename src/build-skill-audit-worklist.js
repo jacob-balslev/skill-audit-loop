@@ -16,6 +16,20 @@ const AUDIT_ARTIFACT_DIR = path.join(PROGRESS_DIR, 'skill-audits');
 const AUDIT_STATE_PATH = path.join(PROGRESS_DIR, 'skill-audit-state.json');
 const TRACKER_PATH = path.join(PROGRESS_DIR, 'skill-audit-tracker.json');
 
+// schema_version 2.0.0 additions (build-worklist 0.3.0):
+// Joins skill-graph/data/publication-classification.json into a parallel
+// publicationQueue array + emits a publication-focused MD view.
+const SCHEMA_VERSION = '2.0.0';
+const PUBLICATION_LEDGER_PATH = path.join(REPO_ROOT, 'skill-graph', 'data', 'publication-classification.json');
+const PUBLISHED_SET_DIR = path.join(REPO_ROOT, 'skill-graph', 'marketplace', 'skills');
+const DEFAULT_PUBLICATION_MD_OUT = path.join(REPO_ROOT, 'skill-graph', 'docs', 'marketplace-publication-queue.generated.md');
+const PACKAGE_JSON_PATH = path.join(__dirname, '..', 'package.json');
+const TIER_ORDER = { S: 0, A: 1, B: 2, C: 3 };
+const SUPERSEDES = [
+  'skill-graph/docs/_archived/marketplace-publication-priority-2026-05-18.md',
+];
+const CHANGELOG_SUMMARY = '2.0.0: add publicationQueue + ledger join; rename generatedAt → generated_at (alias kept).';
+
 const CATEGORY_WEIGHTS = {
   'Product Domain': 18,
   'Agent System': 16,
@@ -386,6 +400,123 @@ function scoreSkill(skill, leverage) {
   };
 }
 
+function loadGeneratorVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8'));
+    return pkg.version || null;
+  } catch {
+    return null;
+  }
+}
+
+function loadPublicationLedger(options = {}) {
+  const ledgerPath = options.publicationLedgerPath
+    ? path.resolve(options.publicationLedgerPath)
+    : PUBLICATION_LEDGER_PATH;
+  if (!fs.existsSync(ledgerPath)) {
+    return { ledgerPath: null, skills: {}, raw: null };
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    return { ledgerPath, skills: raw.skills || {}, raw };
+  } catch {
+    return { ledgerPath, skills: {}, raw: null };
+  }
+}
+
+function loadPublishedSet(options = {}) {
+  const dir = options.publishedSetDir ? path.resolve(options.publishedSetDir) : PUBLISHED_SET_DIR;
+  if (!fs.existsSync(dir)) return new Set();
+  try {
+    return new Set(
+      fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.') && !e.name.startsWith('_'))
+        .map((e) => e.name),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function buildPublicationQueue(ledger, publishedSet, worklistEntries) {
+  const rankByName = new Map(worklistEntries.map((e) => [e.skill, e.rank]));
+  const repoScopeByName = new Map(worklistEntries.map((e) => [e.skill, e.repoScope]));
+  const conflicts = [];
+
+  // publicationQueue entries are publishable rows with a non-null tier; sorted Tier S→C then pop_score desc.
+  const queue = Object.entries(ledger.skills)
+    .filter(([, entry]) => entry.classification === 'publishable' && entry.tier)
+    .map(([skill, entry]) => ({
+      skill,
+      tier: entry.tier,
+      pop_score: entry.pop_score,
+      source: entry.source || null,
+      needs_sanitization: entry.needs_sanitization || null,
+      demand_signal: entry.demand_signal || null,
+      rename_to: entry.rename_to || null,
+      classification: entry.classification,
+      included_in_export: publishedSet.has(skill),
+      worklist_rank: rankByName.get(skill) || null,
+      notes: entry.notes || null,
+    }))
+    .sort((a, b) => {
+      const t = (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9);
+      if (t !== 0) return t;
+      if (a.pop_score !== b.pop_score) return (b.pop_score || 0) - (a.pop_score || 0);
+      return a.skill.localeCompare(b.skill);
+    })
+    .map((entry, index) => ({ rank: index + 1, ...entry }));
+
+  // Conflict detection: ledger says publishable but manifest scope says salesHub (heuristic — warn only).
+  for (const [skill, entry] of Object.entries(ledger.skills)) {
+    const manifestScope = repoScopeByName.get(skill);
+    if (!manifestScope) continue;
+    if (entry.classification === 'publishable' && manifestScope === 'salesHub') {
+      conflicts.push({
+        skill,
+        ledger_classification: entry.classification,
+        manifest_repo_scope: manifestScope,
+        reason: 'ledger marks publishable but skill is in sales-hub manifest scope; verify body is portable before publishing',
+      });
+    }
+    if (entry.classification === 'sales-hub-bound' && manifestScope === 'shared') {
+      conflicts.push({
+        skill,
+        ledger_classification: entry.classification,
+        manifest_repo_scope: manifestScope,
+        reason: 'ledger marks sales-hub-bound but skill is in shared scope; verify ledger reflects current truth',
+      });
+    }
+  }
+
+  // Validation: ledger entries that point at non-existent skills (warn only).
+  const manifestSet = new Set(worklistEntries.map((e) => e.skill));
+  const orphans = Object.keys(ledger.skills).filter((s) => !manifestSet.has(s) && !publishedSet.has(s));
+
+  // Aggregates
+  const tierCounts = { S: 0, A: 0, B: 0, C: 0 };
+  const classCounts = { publishable: 0, 'sales-hub-bound': 0, 'personal-infra': 0 };
+  for (const entry of Object.values(ledger.skills)) {
+    if (entry.tier && tierCounts[entry.tier] !== undefined) tierCounts[entry.tier]++;
+    classCounts[entry.classification] = (classCounts[entry.classification] || 0) + 1;
+  }
+
+  return {
+    publicationQueue: queue,
+    conflicts,
+    orphans,
+    publicationSummary: {
+      publishable: classCounts.publishable,
+      salesHubBound: classCounts['sales-hub-bound'],
+      personalInfra: classCounts['personal-infra'],
+      alreadyPublished: publishedSet.size,
+      tiers: tierCounts,
+      ledgerEntries: Object.keys(ledger.skills).length,
+    },
+  };
+}
+
 function buildWorklist(manifest, options = {}) {
   const skills = loadSkills(manifest);
   const leverageReport = buildRankedReport({ skills, limit: skills.length });
@@ -462,17 +593,41 @@ function buildWorklist(manifest, options = {}) {
     return acc;
   }, {});
 
+  const generatedAt = new Date().toISOString();
+  const generatorVersion = loadGeneratorVersion();
+  const skipPublication = Boolean(options['skip-publication'] || options.skipPublication);
+
+  const baseSummary = {
+    activeSkills: manifest.summary?.active || ranked.length,
+    salesHubSkills: manifest.summary?.salesHub || 0,
+    sharedSkills: manifest.summary?.shared || 0,
+    bands: countsByBand,
+    pendingBands: pendingCountsByBand,
+    status: countsByStatus,
+  };
+
+  let publicationBlock = { publicationQueue: [], conflicts: [], orphans: [], publicationSummary: null };
+  let ledgerPath = null;
+  if (!skipPublication) {
+    const ledger = loadPublicationLedger(options);
+    ledgerPath = ledger.ledgerPath;
+    const publishedSet = loadPublishedSet(options);
+    publicationBlock = buildPublicationQueue(ledger, publishedSet, ranked);
+  }
+
   return {
-    generatedAt: new Date().toISOString(),
+    schema_version: SCHEMA_VERSION,
+    generator_version: generatorVersion,
+    generated_at: generatedAt,
+    generatedAt, // deprecated alias — remove in 0.4.0
+    supersedes: skipPublication ? [] : SUPERSEDES,
+    changelog_summary: CHANGELOG_SUMMARY,
     source: 'skill-audit-loop/src/build-skill-audit-worklist.js',
     entrypoint: 'scripts/skill/build-skill-audit-worklist.js',
+    publication_ledger: ledgerPath ? path.relative(REPO_ROOT, ledgerPath) : null,
     summary: {
-      activeSkills: manifest.summary?.active || ranked.length,
-      salesHubSkills: manifest.summary?.salesHub || 0,
-      sharedSkills: manifest.summary?.shared || 0,
-      bands: countsByBand,
-      pendingBands: pendingCountsByBand,
-      status: countsByStatus,
+      ...baseSummary,
+      publication: publicationBlock.publicationSummary,
     },
     rankingMethod: {
       categoryWeights: CATEGORY_WEIGHTS,
@@ -482,6 +637,9 @@ function buildWorklist(manifest, options = {}) {
       leverageSource: 'scripts/skill/skill-leverage-ranker.js',
     },
     worklist: ranked,
+    publicationQueue: publicationBlock.publicationQueue,
+    conflicts: publicationBlock.conflicts,
+    publication_orphans: publicationBlock.orphans,
   };
 }
 
@@ -544,11 +702,102 @@ function renderMarkdown(worklist) {
   return `${lines.join('\n')}\n`;
 }
 
-function writeOutputs(worklist, jsonOut, mdOut) {
+function renderPublicationMarkdown(worklist) {
+  const lines = [];
+  lines.push('# Marketplace Publication Queue (generated)');
+  lines.push('');
+  lines.push(`Generated: ${worklist.generated_at}`);
+  lines.push(`Schema: ${worklist.schema_version}`);
+  lines.push(`Generator: skill-audit-loop@${worklist.generator_version || 'unknown'}`);
+  lines.push(`Source ledger: \`${worklist.publication_ledger || 'skill-graph/data/publication-classification.json'}\``);
+  lines.push('');
+  lines.push('> Auto-generated from `skill-graph/data/publication-classification.json` by');
+  lines.push('> `skill-audit-loop/src/build-skill-audit-worklist.js`. Do not hand-edit — re-run');
+  lines.push('> `node scripts/skill/build-skill-audit-worklist.js --write` after editing the ledger.');
+  lines.push('');
+
+  const summary = worklist.summary?.publication;
+  if (summary) {
+    lines.push('## Summary');
+    lines.push('');
+    lines.push(`- Publishable candidates: ${summary.publishable}`);
+    lines.push(`- Sales-Hub-bound (excluded): ${summary.salesHubBound}`);
+    lines.push(`- Personal-infra (excluded): ${summary.personalInfra}`);
+    lines.push(`- Already published (in OSS export): ${summary.alreadyPublished}`);
+    lines.push(`- Tier counts: S=${summary.tiers.S} A=${summary.tiers.A} B=${summary.tiers.B} C=${summary.tiers.C}`);
+    lines.push(`- Ledger entries total: ${summary.ledgerEntries}`);
+    lines.push('');
+  }
+
+  const tiers = [
+    ['S', 'Tier S — Publish immediately (5★)'],
+    ['A', 'Tier A — High demand, second wave (4★)'],
+    ['B', 'Tier B — Standard utility (3★)'],
+    ['C', 'Tier C — Niche but publishable (2★)'],
+  ];
+
+  for (const [tierKey, heading] of tiers) {
+    const entries = worklist.publicationQueue.filter((e) => e.tier === tierKey);
+    if (entries.length === 0) continue;
+    lines.push(`## ${heading} (n=${entries.length})`);
+    lines.push('');
+    lines.push('| Rank | Skill | Pop | Source | Sanitize? | Demand | In Export | Audit Rank | Notes |');
+    lines.push('| --- | --- | ---: | --- | --- | --- | ---: | ---: | --- |');
+    for (const e of entries) {
+      const skillLabel = e.rename_to ? `\`${e.skill}\` *(→ ${e.rename_to})*` : `\`${e.skill}\``;
+      lines.push(
+        `| ${e.rank} | ${skillLabel} | ${e.pop_score ?? ''} | ${renderCell(e.source)} | ${renderCell(e.needs_sanitization)} | ${renderCell(e.demand_signal)} | ${e.included_in_export ? 'yes' : 'no'} | ${renderCell(e.worklist_rank)} | ${renderCell(e.notes)} |`,
+      );
+    }
+    lines.push('');
+  }
+
+  if (worklist.conflicts && worklist.conflicts.length > 0) {
+    lines.push(`## Conflicts (${worklist.conflicts.length})`);
+    lines.push('');
+    lines.push('Ledger classification disagrees with manifest scope. Resolve before next publication batch.');
+    lines.push('');
+    lines.push('| Skill | Ledger | Manifest Scope | Reason |');
+    lines.push('| --- | --- | --- | --- |');
+    for (const c of worklist.conflicts) {
+      lines.push(`| \`${c.skill}\` | ${renderCell(c.ledger_classification)} | ${renderCell(c.manifest_repo_scope)} | ${renderCell(c.reason)} |`);
+    }
+    lines.push('');
+  }
+
+  if (worklist.publication_orphans && worklist.publication_orphans.length > 0) {
+    lines.push(`## Orphan ledger entries (${worklist.publication_orphans.length})`);
+    lines.push('');
+    lines.push('Ledger names skills not present in the active manifest or marketplace export. Likely archived or stale.');
+    lines.push('');
+    for (const skill of worklist.publication_orphans) {
+      lines.push(`- \`${skill}\``);
+    }
+    lines.push('');
+  }
+
+  lines.push('## Supersedes');
+  lines.push('');
+  for (const s of worklist.supersedes || []) {
+    lines.push(`- \`${s}\``);
+  }
+  if (!worklist.supersedes || worklist.supersedes.length === 0) {
+    lines.push('- (none)');
+  }
+  lines.push('');
+
+  return `${lines.join('\n')}\n`;
+}
+
+function writeOutputs(worklist, jsonOut, mdOut, publicationMdOut) {
   ensureParent(jsonOut);
   ensureParent(mdOut);
   fs.writeFileSync(jsonOut, JSON.stringify(worklist, null, 2) + '\n', 'utf8');
   fs.writeFileSync(mdOut, renderMarkdown(worklist), 'utf8');
+  if (publicationMdOut && worklist.publicationQueue && worklist.publicationQueue.length > 0) {
+    ensureParent(publicationMdOut);
+    fs.writeFileSync(publicationMdOut, renderPublicationMarkdown(worklist), 'utf8');
+  }
 }
 
 function main() {
@@ -561,6 +810,19 @@ function main() {
       '  node scripts/skill/build-skill-audit-worklist.js --write',
       '  node scripts/skill/build-skill-audit-worklist.js --json',
       '  node scripts/skill/build-skill-audit-worklist.js --json-out /tmp/worklist.json --md-out /tmp/worklist.md --write',
+      '',
+      'Flags:',
+      '  --write                   Persist worklist JSON + audit MD + publication MD',
+      '  --json                    Emit full worklist JSON to stdout',
+      '  --json-out <path>         Override default JSON output path',
+      '  --md-out <path>           Override default audit MD output path',
+      '  --publication-md-out <p>  Override default publication MD output path',
+      '  --skip-publication        Skip publicationQueue/conflicts and the publication MD',
+      '',
+      'Outputs:',
+      `  JSON:           ${path.relative(REPO_ROOT, DEFAULT_JSON_OUT)}`,
+      `  Audit MD:       ${path.relative(REPO_ROOT, DEFAULT_MD_OUT)}`,
+      `  Publication MD: ${path.relative(REPO_ROOT, DEFAULT_PUBLICATION_MD_OUT)}`,
     ].join('\n'));
     return;
   }
@@ -569,9 +831,12 @@ function main() {
   const worklist = buildWorklist(manifest, args);
   const jsonOut = args['json-out'] ? path.resolve(args['json-out']) : DEFAULT_JSON_OUT;
   const mdOut = args['md-out'] ? path.resolve(args['md-out']) : DEFAULT_MD_OUT;
+  const publicationMdOut = args['publication-md-out']
+    ? path.resolve(args['publication-md-out'])
+    : DEFAULT_PUBLICATION_MD_OUT;
 
   if (args.write) {
-    writeOutputs(worklist, jsonOut, mdOut);
+    writeOutputs(worklist, jsonOut, mdOut, publicationMdOut);
   }
 
   if (args.json || !args.write) {
@@ -579,7 +844,20 @@ function main() {
     return;
   }
 
-  process.stdout.write(`Wrote skill audit worklist to ${path.relative(REPO_ROOT, jsonOut)} and ${path.relative(REPO_ROOT, mdOut)}\n`);
+  const wroteParts = [
+    path.relative(REPO_ROOT, jsonOut),
+    path.relative(REPO_ROOT, mdOut),
+  ];
+  if (worklist.publicationQueue && worklist.publicationQueue.length > 0) {
+    wroteParts.push(path.relative(REPO_ROOT, publicationMdOut));
+  }
+  process.stdout.write(`Wrote skill audit worklist to ${wroteParts.join(', ')}\n`);
+  if (worklist.conflicts && worklist.conflicts.length > 0) {
+    process.stdout.write(`Note: ${worklist.conflicts.length} publication conflict(s) detected — see conflicts[] in JSON or the Conflicts section in the publication MD.\n`);
+  }
+  if (worklist.publication_orphans && worklist.publication_orphans.length > 0) {
+    process.stdout.write(`Note: ${worklist.publication_orphans.length} ledger orphan(s) — skills named in ledger but absent from manifest and export.\n`);
+  }
 }
 
 if (require.main === module) {
@@ -598,5 +876,12 @@ module.exports = {
   inferProjectRelevance,
   main,
   renderMarkdown,
+  renderPublicationMarkdown,
   scoreSkill,
+  loadPublicationLedger,
+  loadPublishedSet,
+  buildPublicationQueue,
+  SCHEMA_VERSION,
+  SUPERSEDES,
+  CHANGELOG_SUMMARY,
 };
