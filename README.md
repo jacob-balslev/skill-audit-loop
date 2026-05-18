@@ -1,5 +1,8 @@
 # Skill Audit Loop
 
+> ⚠️ **DEPRECATED — content consolidated into [@skill-graph/cli](https://www.npmjs.com/package/@skill-graph/cli) as of v0.5.6.**
+> Install via `npm install -g @skill-graph/cli`. This repo is now a **docs-only mirror** preserved for historical reference and inbound-link stability. See [SH-6132](https://linear.app/sales-hub/issue/SH-6132) for the consolidation rationale.
+
 > One loop, four operations, a flat Health Block on every skill. Karpathy keep-or-revert discipline applied to skill libraries.
 
 **npm**: `@skill-graph/audit` · **Version**: 0.2.0 · **License**: Apache-2.0
@@ -23,27 +26,15 @@ Every action falls into one of four operations:
 
 State lives in the skill's own frontmatter — the `audit_state` Health Block introduced in Skill Metadata Protocol v6. No log-file crawl required.
 
-## What this repo contains
+## What this mirror contains
 
 | Path | Purpose |
 |------|---------|
-| `SKILL_AUDIT_LOOP.md` | Full audit procedure specification |
-| `SKILL_AUDIT_CHECKLIST.md` | Per-skill audit checklist used during `audit` |
-| `src/skill-audit.js` | The `audit` operation (deterministic + optional graded mode) |
-| `src/skill-improve.js` | The `improve` operation (one field, keep-or-revert) |
-| `src/evaluate-skill.js` | The `evaluate` operation (eval suite runner) |
-| `src/skill-evolve.js` | The `evolve` operation (corpus walker) |
-| `src/skill-status.js` | Read-only view of a skill's Health Block |
-| `src/build-skill-audit-worklist.js` | Canonical work-list generator; ranks skills for evolve dispatch and records checklist state from scorecards, claim state, previous work-list status, and skill versions. The root `Development/scripts/skill/build-skill-audit-worklist.js` command is only a compatibility shim to this file; ownership is registered in `../docs/reference/implementation-ownership.json`. |
-| `src/batch-eval.js` | Parallel eval runner for bulk operations |
-| `src/eval-linter.js` | Validates eval artifacts |
-| `src/eval-staleness-checker.js` | Detects stale evals |
-| `src/graders/` | Graded-dimension prompt modules |
-| `src/skill-improvement-helpers.js` | Shared evaluator logic — candidate gating, model executor resolution, JSON extraction, history persistence |
-| `src/research-feedback.js` | Research-artifact analysis: fingerprint scoring, audit aggregation, per-skill brief enrichment |
-| `shared/model-provider.js` | Model alias → backend resolution (claude/codex/opencode/gemini), `MODEL_REGISTRY` |
-| `shared/skill-frontmatter.js` | Minimal YAML frontmatter parser for SKILL.md files |
-| `evals/` | Evaluation fixtures and baselines |
+| `SKILL_AUDIT_LOOP.md` | Full audit procedure specification (historical reference) |
+| `SKILL_AUDIT_CHECKLIST.md` | Per-skill audit checklist (historical reference) |
+| `CHANGELOG.md` | Historical version history |
+
+Source files (`src/`, `shared/`, `evals/`, `package.json`) have been consolidated into [`@skill-graph/cli`](https://www.npmjs.com/package/@skill-graph/cli) as of v0.5.6. See the [consolidated source](https://github.com/jacob-balslev/skill-graph) for the live implementation.
 
 ## What changed in v0.2.0
 
@@ -52,27 +43,26 @@ State lives in the skill's own frontmatter — the `audit_state` Health Block in
 - Karpathy keep-or-revert is enforced inside `improve`: edit one field, auto-test, automatic revert if the metric drops.
 - Adds the Health Block (`last_audited`, `last_changed`, `audit_verdict`, `eval_score`, `eval_failed_ids`, `lint_verdict`, `drift_status`) to every skill — state lives on the skill instead of in scattered log files.
 
-## Quick start
+## Quick start (consolidated into @skill-graph/cli)
 
 ```bash
+# Install the consolidated package
+npm install -g @skill-graph/cli
+
 # Audit a single skill
-node src/skill-audit.js my-skill
+skill-graph audit my-skill
 
 # Audit with graded dimensions (seven LLM-graded scores)
-node src/skill-audit.js my-skill --graded
-
-# Improve one field — auto-tests and keeps or reverts based on eval_score delta
-node src/skill-improve.js my-skill --field mental_model
+skill-graph audit my-skill --graded
 
 # Evaluate a skill
-node src/evaluate-skill.js my-skill
-
-# Evolve the corpus — audit + improve + evaluate, prioritised by staleness
-node src/skill-evolve.js --top 10
+skill-graph evaluate my-skill
 
 # Show the Health Block at a glance
-node src/skill-status.js my-skill
+skill-graph status my-skill
 ```
+
+For the full command reference, see [@skill-graph/cli on npm](https://www.npmjs.com/package/@skill-graph/cli) or the [skill-graph repository](https://github.com/jacob-balslev/skill-graph).
 
 ## Related repos
 

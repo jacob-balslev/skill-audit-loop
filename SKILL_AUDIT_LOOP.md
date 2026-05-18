@@ -12,7 +12,7 @@ That's it. One field at a time, keep or revert based on a single measurable sign
 
 ## The Four Operations
 
-Every action in this loop falls into one of four operations. Each writes to a specific set of flat fields in the Skill Metadata Protocol v6 (see `skill-metadata-protocol/schemas/skill.v6.schema.json`).
+Every action in this loop falls into one of four operations. Each writes to a specific set of flat fields in the Skill Metadata Protocol v6 (see [skill.v6.schema.json](https://github.com/jacob-balslev/skill-graph/blob/main/lib/schemas/skill.v6.schema.json)).
 
 | Operation | What it does | Mutates skill? | Writes which fields |
 |---|---|---|---|
@@ -152,26 +152,24 @@ audits/<skill-name>/
 
 These remain append-only evidence files for any audit run that needs long-form output. The skill's Health Block lets a reader skip them entirely if all they need is the verdict.
 
-## Quick start
+## Quick start (consolidated into @skill-graph/cli)
+
+Source has moved to [@skill-graph/cli](https://www.npmjs.com/package/@skill-graph/cli):
 
 ```bash
+npm install -g @skill-graph/cli
+
 # Audit a single skill
-node src/skill-audit.js <skill-name>
+skill-graph audit <skill-name>
 
 # Audit with graded dimensions
-node src/skill-audit.js <skill-name> --graded
+skill-graph audit <skill-name> --graded
 
-# Improve one field (auto-tests + keeps or reverts)
-node src/skill-improve.js <skill-name> --field mental_model
-
-# Evaluate a skill (writes eval_score and eval_failed_ids)
-node src/evaluate-skill.js <skill-name>
-
-# Evolve the corpus — audit, improve, evaluate each in priority order
-node src/skill-evolve.js --top 10
+# Evaluate a skill
+skill-graph evaluate <skill-name>
 
 # Show the Health Block for a skill at a glance
-node src/skill-status.js <skill-name>
+skill-graph status <skill-name>
 ```
 
 ## Cadence
@@ -189,7 +187,7 @@ The loop does not require a separate issue tracker, dashboard, control plane, or
 
 ## Related Specs
 
-- `skill-metadata-protocol/docs/skill-metadata-protocol.md` — the canonical field list including the v6 Health Block and flat Understanding fields
-- `skill-metadata-protocol/schemas/skill.v6.schema.json` — the machine-validated contract
-- `skill-metadata-protocol/docs/migrations/v5-to-v6.md` — concept block flattening + Health Block introduction
+- [SKILL_METADATA_PROTOCOL.md](https://github.com/jacob-balslev/skill-graph/blob/main/docs/SKILL_METADATA_PROTOCOL.md) — the canonical field list including the v6 Health Block and flat Understanding fields
+- [skill.v6.schema.json](https://github.com/jacob-balslev/skill-graph/blob/main/lib/schemas/skill.v6.schema.json) — the machine-validated contract
+- [v5→v6 migration](https://github.com/jacob-balslev/skill-graph/blob/main/docs/migrations/v5-to-v6.md) — concept block flattening + Health Block introduction
 - `SKILL_AUDIT_CHECKLIST.md` — the per-skill checklist used during `audit`
