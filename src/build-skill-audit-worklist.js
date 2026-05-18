@@ -9,8 +9,12 @@ const { buildRankedReport } = require('./skill-leverage-ranker');
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const MANIFEST_PATH = path.join(REPO_ROOT, 'skills.manifest.json');
-const DEFAULT_JSON_OUT = path.join(REPO_ROOT, '.opencode', 'progress', 'skill-audit-worklist.json');
-const DEFAULT_MD_OUT = path.join(REPO_ROOT, '.opencode', 'progress', 'skill-audit-worklist.md');
+const PROGRESS_DIR = path.join(REPO_ROOT, '.opencode', 'progress');
+const DEFAULT_JSON_OUT = path.join(PROGRESS_DIR, 'skill-audit-worklist.json');
+const DEFAULT_MD_OUT = path.join(PROGRESS_DIR, 'skill-audit-worklist.md');
+const AUDIT_ARTIFACT_DIR = path.join(PROGRESS_DIR, 'skill-audits');
+const AUDIT_STATE_PATH = path.join(PROGRESS_DIR, 'skill-audit-state.json');
+const TRACKER_PATH = path.join(PROGRESS_DIR, 'skill-audit-tracker.json');
 
 const CATEGORY_WEIGHTS = {
   'Product Domain': 18,
@@ -61,6 +65,199 @@ function loadSkills(manifest) {
 
 function slugifySkillName(name) {
   return String(name).replace(/[\/]+/g, '--').replace(/[^a-zA-Z0-9_.-]+/g, '-');
+}
+
+function readJsonIfExists(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function fileTimestamp(filePath) {
+  try {
+    return fs.statSync(filePath).mtime.toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function unquoteScalar(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .trim();
+}
+
+function frontmatterScalar(content, field) {
+  const match = content.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
+  return match ? unquoteScalar(match[1]) : null;
+}
+
+function readSkillFileState(skill) {
+  const skillPath = path.resolve(REPO_ROOT, skill.path);
+  if (!fs.existsSync(skillPath)) {
+    return {
+      skillVersion: null,
+      skillLastUpdated: null,
+      skillLastUpdatedSource: null,
+    };
+  }
+
+  const content = fs.readFileSync(skillPath, 'utf8');
+  const skillVersion = frontmatterScalar(content, 'version');
+  const freshness = frontmatterScalar(content, 'freshness');
+  const lastAudited = frontmatterScalar(content, 'last_audited');
+  const driftCheck = frontmatterScalar(content, 'drift_check');
+  const modifiedAt = fileTimestamp(skillPath);
+  const datedField = lastAudited || freshness || driftCheck;
+
+  return {
+    skillVersion,
+    skillLastUpdated: datedField || modifiedAt,
+    skillLastUpdatedSource: datedField
+      ? `frontmatter:${lastAudited ? 'last_audited' : freshness ? 'freshness' : 'drift_check'}`
+      : path.relative(REPO_ROOT, skillPath),
+  };
+}
+
+function loadQueueState(options = {}) {
+  const progressDir = options.progressDir ? path.resolve(options.progressDir) : PROGRESS_DIR;
+  const auditDir = options.auditDir ? path.resolve(options.auditDir) : path.join(progressDir, 'skill-audits');
+  const auditStatePath = options.auditStatePath ? path.resolve(options.auditStatePath) : path.join(progressDir, 'skill-audit-state.json');
+  const trackerPath = options.trackerPath ? path.resolve(options.trackerPath) : path.join(progressDir, 'skill-audit-tracker.json');
+  const previousWorklistPath = options.previousWorklistPath ? path.resolve(options.previousWorklistPath) : path.join(progressDir, 'skill-audit-worklist.json');
+
+  const state = {
+    completedByName: new Map(),
+    completedBySlug: new Map(),
+    claimedByName: new Map(),
+    priorStatusByName: new Map(),
+  };
+
+  if (fs.existsSync(auditDir)) {
+    for (const file of fs.readdirSync(auditDir)) {
+      if (!file.endsWith('.scorecard.md')) continue;
+      const slug = file.replace(/\.scorecard\.md$/, '');
+      const absPath = path.join(auditDir, file);
+      state.completedBySlug.set(slug, {
+        source: path.relative(REPO_ROOT, absPath),
+        completedAt: fileTimestamp(absPath),
+      });
+    }
+  }
+
+  const auditState = readJsonIfExists(auditStatePath);
+  if (auditState?.last_completed) {
+    state.completedByName.set(auditState.last_completed, {
+      source: path.relative(REPO_ROOT, auditStatePath),
+      completedAt: auditState.last_updated || null,
+    });
+  }
+  if (auditState?.current_item && auditState.current_phase && auditState.current_phase !== 'done') {
+    state.claimedByName.set(auditState.current_item, {
+      source: path.relative(REPO_ROOT, auditStatePath),
+      phase: auditState.current_phase,
+      claimedAt: auditState.last_updated || null,
+    });
+  }
+
+  const tracker = readJsonIfExists(trackerPath);
+  for (const batch of Object.values(tracker?.batches || {})) {
+    for (const entry of batch.skills || []) {
+      if (!entry?.skill || !entry?.status) continue;
+      if (entry.status === 'completed') {
+        state.completedByName.set(entry.skill, {
+          source: path.relative(REPO_ROOT, trackerPath),
+          completedAt: entry.completedAt || null,
+        });
+      } else if (entry.status === 'claimed') {
+        state.claimedByName.set(entry.skill, {
+          source: path.relative(REPO_ROOT, trackerPath),
+          phase: 'claimed',
+          claimedAt: entry.claimedAt || entry.updatedAt || null,
+        });
+      }
+    }
+  }
+
+  const previousWorklist = readJsonIfExists(previousWorklistPath);
+  for (const entry of previousWorklist?.worklist || []) {
+    if (!entry?.skill || !entry?.status || entry.status === 'pending') continue;
+    state.priorStatusByName.set(entry.skill, {
+      status: entry.status,
+      source: path.relative(REPO_ROOT, previousWorklistPath),
+      completedAt: entry.completedAt || null,
+      claimedAt: entry.claimedAt || null,
+    });
+  }
+
+  return state;
+}
+
+function queueStateForSkill(skill, queueState) {
+  const slug = slugifySkillName(skill.name);
+  const completed = queueState.completedByName.get(skill.name) || queueState.completedBySlug.get(slug);
+  if (completed) {
+    return {
+      status: 'completed',
+      statusEvidence: completed,
+    };
+  }
+
+  const claimed = queueState.claimedByName.get(skill.name);
+  if (claimed) {
+    return {
+      status: 'claimed',
+      statusEvidence: claimed,
+    };
+  }
+
+  const prior = queueState.priorStatusByName.get(skill.name);
+  if (prior?.status === 'completed' || prior?.status === 'claimed') {
+    return {
+      status: prior.status,
+      statusEvidence: prior,
+    };
+  }
+
+  return {
+    status: 'pending',
+    statusEvidence: null,
+  };
+}
+
+function checklistStateForSkill(skill, queueState) {
+  const queue = queueStateForSkill(skill, queueState);
+  const skillFileState = readSkillFileState(skill);
+  const completedAt = queue.status === 'completed'
+    ? queue.statusEvidence?.completedAt || null
+    : null;
+  const claimedAt = queue.status === 'claimed'
+    ? queue.statusEvidence?.claimedAt || null
+    : null;
+  const statusUpdatedAt = completedAt || claimedAt || null;
+
+  return {
+    ...queue,
+    skillVersion: skillFileState.skillVersion,
+    upgraded: queue.status === 'completed',
+    upgradedVersion: queue.status === 'completed' ? skillFileState.skillVersion : null,
+    claimed: queue.status === 'claimed',
+    claimedAt,
+    completedAt,
+    lastUpdated: statusUpdatedAt || skillFileState.skillLastUpdated,
+    lastUpdatedSource: statusUpdatedAt
+      ? queue.statusEvidence?.source || null
+      : skillFileState.skillLastUpdatedSource,
+  };
+}
+
+function renderCell(value) {
+  if (value === null || value === undefined || value === '') return '';
+  return String(value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
 function titleize(name) {
@@ -193,11 +390,13 @@ function buildWorklist(manifest, options = {}) {
   const skills = loadSkills(manifest);
   const leverageReport = buildRankedReport({ skills, limit: skills.length });
   const leverageBySkill = new Map(leverageReport.top_skills.map((entry) => [entry.skill, entry]));
+  const queueState = loadQueueState(options);
 
   const ranked = skills
     .map((skill) => {
       const leverage = leverageBySkill.get(skill.name) || null;
       const score = scoreSkill(skill, leverage);
+      const checklist = checklistStateForSkill(skill, queueState);
       return {
         skill: skill.name,
         path: skill.path,
@@ -229,7 +428,16 @@ function buildWorklist(manifest, options = {}) {
           'Update SKILL.md and evals in the same pass',
           'Fix confirmed repo/codebase drift that the audit uncovers',
         ],
-        status: 'pending',
+        status: checklist.status,
+        statusEvidence: checklist.statusEvidence,
+        upgraded: checklist.upgraded,
+        upgradedVersion: checklist.upgradedVersion,
+        skillVersion: checklist.skillVersion,
+        claimed: checklist.claimed,
+        claimedAt: checklist.claimedAt,
+        completedAt: checklist.completedAt,
+        lastUpdated: checklist.lastUpdated,
+        lastUpdatedSource: checklist.lastUpdatedSource,
       };
     })
     .sort((a, b) => b.importanceScore - a.importanceScore || a.skill.localeCompare(b.skill))
@@ -243,15 +451,28 @@ function buildWorklist(manifest, options = {}) {
     acc[entry.importanceBand] = (acc[entry.importanceBand] || 0) + 1;
     return acc;
   }, {});
+  const pendingCountsByBand = ranked
+    .filter((entry) => entry.status !== 'completed')
+    .reduce((acc, entry) => {
+      acc[entry.importanceBand] = (acc[entry.importanceBand] || 0) + 1;
+      return acc;
+    }, {});
+  const countsByStatus = ranked.reduce((acc, entry) => {
+    acc[entry.status] = (acc[entry.status] || 0) + 1;
+    return acc;
+  }, {});
 
   return {
     generatedAt: new Date().toISOString(),
-    source: 'scripts/skill/build-skill-audit-worklist.js',
+    source: 'skill-audit-loop/src/build-skill-audit-worklist.js',
+    entrypoint: 'scripts/skill/build-skill-audit-worklist.js',
     summary: {
       activeSkills: manifest.summary?.active || ranked.length,
       salesHubSkills: manifest.summary?.salesHub || 0,
       sharedSkills: manifest.summary?.shared || 0,
       bands: countsByBand,
+      pendingBands: pendingCountsByBand,
+      status: countsByStatus,
     },
     rankingMethod: {
       categoryWeights: CATEGORY_WEIGHTS,
@@ -281,6 +502,9 @@ function renderMarkdown(worklist) {
   lines.push(`- High band: ${worklist.summary.bands.high || 0}`);
   lines.push(`- Medium band: ${worklist.summary.bands.medium || 0}`);
   lines.push(`- Low band: ${worklist.summary.bands.low || 0}`);
+  lines.push(`- Pending: ${worklist.summary.status.pending || 0}`);
+  lines.push(`- Claimed: ${worklist.summary.status.claimed || 0}`);
+  lines.push(`- Upgraded: ${worklist.summary.status.completed || 0}`);
   lines.push('');
   lines.push('## Ranking Method');
   lines.push('');
@@ -295,10 +519,13 @@ function renderMarkdown(worklist) {
     if (entries.length === 0) continue;
     lines.push(`## ${band.charAt(0).toUpperCase() + band.slice(1)} (${entries.length})`);
     lines.push('');
-    lines.push('| Rank | Skill | Category | Repos | Score | Why Now |');
-    lines.push('| --- | --- | --- | --- | --- | --- |');
+    lines.push('| Rank | Skill | Status | Version | Claimed | Last Updated | Category | Repos | Score | Why Now |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
     for (const entry of entries) {
-      lines.push(`| ${entry.rank} | \`${entry.skill}\` | ${entry.primaryCategory} | ${entry.projectRelevance.join(', ')} | ${entry.importanceScore} | ${entry.reasons.join('; ')} |`);
+      const statusLabel = entry.upgraded ? 'upgraded' : entry.status;
+      const versionLabel = entry.upgradedVersion || entry.skillVersion || '';
+      const claimedLabel = entry.claimed ? (entry.claimedAt || 'yes') : '';
+      lines.push(`| ${entry.rank} | \`${entry.skill}\` | ${renderCell(statusLabel)} | ${renderCell(versionLabel)} | ${renderCell(claimedLabel)} | ${renderCell(entry.lastUpdated)} | ${renderCell(entry.primaryCategory)} | ${renderCell(entry.projectRelevance.join(', '))} | ${entry.importanceScore} | ${renderCell(entry.reasons.join('; '))} |`);
     }
     lines.push('');
   }
@@ -369,6 +596,7 @@ module.exports = {
   buildResearchQueries,
   importanceBandFromRank,
   inferProjectRelevance,
+  main,
   renderMarkdown,
   scoreSkill,
 };
