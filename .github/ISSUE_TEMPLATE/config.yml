@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Skill Graph Discussions
+    url: https://github.com/jacob-balslev/skill-metadata-protocol/discussions
+    about: Ask questions, share ideas, discuss the protocol and the four-repo ecosystem.
+  - name: Audit Loop docs
+    url: https://github.com/jacob-balslev/skill-audit-loop/blob/main/SKILL_AUDIT_LOOP.md
+    about: Read the audit procedure spec before opening a workflow-related issue.
+  - name: Security advisory
+    url: https://github.com/jacob-balslev/skill-audit-loop/security/advisories/new
+    about: Report a security vulnerability privately (do NOT open a public issue).

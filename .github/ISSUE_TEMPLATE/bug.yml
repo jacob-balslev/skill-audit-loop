@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a defect in the audit, improve, evaluate, or evolve operations
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please fill in the fields below so we can reproduce and triage it.
+  - type: input
+    id: pkg-version
+    attributes:
+      label: Package version
+      description: "`@skill-graph/audit` version (from `package.json`)"
+      placeholder: "e.g. 0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: operation
+    attributes:
+      label: Which operation surfaced the bug?
+      options:
+        - audit
+        - improve
+        - evaluate
+        - evolve
+        - skill-status
+        - build-skill-audit-worklist
+        - batch-eval
+        - other / unsure
+    validations:
+      required: true
+  - type: input
+    id: skill-name
+    attributes:
+      label: Skill name (if applicable)
+      placeholder: "e.g. webhook-integration"
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Minimal commands to reproduce.
+      placeholder: |
+        1. cd into a skill library
+        2. Run `node src/skill-audit.js my-skill`
+        3. ...
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the full error message, stack trace, or CLI output. If a grader returned an unexpected score, include the grader output.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        - OS: macOS 15.5 / Ubuntu 24.04 / ...
+        - Node: 22.x
+        - Model used (if eval-related): claude-opus / claude-sonnet / gpt-5 / ...
+    validations:
+      required: false
